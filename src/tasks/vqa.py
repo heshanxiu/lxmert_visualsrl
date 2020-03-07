@@ -19,8 +19,13 @@ DataTuple = collections.namedtuple("DataTuple", 'dataset loader evaluator')
 
 def get_data_tuple(splits: str, bs:int, shuffle=False, drop_last=False) -> DataTuple:
     dset = VQADataset(splits)
+
+    #*need this
     tset = VQATorchDataset(dset)
+
     evaluator = VQAEvaluator(dset)
+
+    #*need this
     data_loader = DataLoader(
         tset, batch_size=bs,
         shuffle=shuffle, num_workers=args.num_workers,
@@ -77,6 +82,7 @@ class VQA:
         self.output = args.output
         os.makedirs(self.output, exist_ok=True)
 
+
     def train(self, train_tuple, eval_tuple):
         dset, loader, evaluator = train_tuple
         iter_wrapper = (lambda x: tqdm(x, total=len(loader))) if args.tqdm else (lambda x: x)
@@ -92,6 +98,7 @@ class VQA:
                 feats, boxes, target = feats.cuda(), boxes.cuda(), target.cuda()
                 logit = self.model(feats, boxes, sent)
                 assert logit.dim() == target.dim() == 2
+                ## edit
                 loss = self.bce_loss(logit, target)
                 loss = loss * logit.size(1)
 

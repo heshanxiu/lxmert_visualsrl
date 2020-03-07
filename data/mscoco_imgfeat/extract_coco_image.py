@@ -49,6 +49,8 @@ def load_image_ids(img_root, split_dir):
                 (
                     os.path.join(img_root, name),
                     idx))
+        print("path:", os.path.join(img_root, name),"\n")
+        print("index", idx,"\n")
     return pathXid
 
 def generate_tsv(prototxt, weights, image_ids, outfile):

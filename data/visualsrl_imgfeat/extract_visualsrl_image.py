@@ -1,19 +1,26 @@
 # !/usr/bin/env python
-
 # The root of bottom-up-attention repo. Do not need to change if using provided docker file.
 BUTD_ROOT = '/opt/butd/'
 
 # SPLIT to its folder name under IMG_ROOT
 SPLIT2DIR = {
-        'train': 'train',
-        'valid': 'dev',
-        'test': 'test1',
-        'hidden': 'test2',  # Please correct whether it is test2
-        }
+    'train': 'train',
+    'dev': 'dev',
+    'test': 'test',
+    'train2':'train'
+}
 
+import signal
+import sys
+
+
+def signal_handler(sig, frame, name):
+    print('This file causes core dump: ', name)
+    exit(0)
 
 
 import os, sys
+
 sys.path.insert(0, BUTD_ROOT + "/tools")
 os.environ['GLOG_minloglevel'] = '2'
 
@@ -21,6 +28,7 @@ import _init_paths
 from fast_rcnn.config import cfg, cfg_from_file, cfg_from_list
 from fast_rcnn.test import im_detect, _get_blobs
 from fast_rcnn.nms_wrapper import nms
+from PIL import Image
 
 import caffe
 import argparse
@@ -30,6 +38,7 @@ import numpy as np
 import cv2
 import csv
 from tqdm import tqdm
+import json
 
 csv.field_size_limit(sys.maxsize)
 
@@ -42,24 +51,70 @@ MIN_BOXES = 36
 MAX_BOXES = 36
 
 
-def load_image_ids(img_root, split_dir):
-    """images in the same directory are in the same sequential region,
-    but with no internal ordering"""
-    pathXid = []
-    if split_dir == 'train':
-        img_root = os.path.join(img_root, split_dir)
-        for d in os.listdir(img_root):
-            dir_path = os.path.join(img_root, d)
-            for name in os.listdir(dir_path):
-                idx = name.split(".")[0]
-                pathXid.append((os.path.join(dir_path, name),idx))
+def load_image_ids(img_root, split_name):
+    ''' Load a list of (path,image_id tuples). Modify this to suit your data locations. '''
+
+    signal.signal(signal.SIGQUIT, signal_handler)
+
+    split = []
+    if split_name == 'train' or split_name == 'train2':
+        with open('train.json') as f:
+            data = json.load(f)
+            for i, item in enumerate(data):
+                if i == 13820 or i == 14258 or i == 22786 or i == 22793:
+                    continue
+                else:
+                    dir_name = item.split('_')[0]
+                    name = os.path.join(dir_name, item)
+                    filepath = os.path.join(img_root, name)
+                    split.append((filepath, item))
+    elif split_name is 'dev' or split_name is 'dev2':
+        with open('dev.json') as f:
+            data = json.load(f)
+            for i, item in enumerate(data):
+                if i == 2868 or i == 2867 or i == 15660 or i == 15661:
+                    continue
+                dir_name = item.split('_')[0]
+                name = os.path.join(dir_name, item)
+                filepath = os.path.join(img_root, name)
+                split.append((filepath, item))
+    elif split_name == 'test':
+        with open('test.json') as f:
+            data = json.load(f)
+            for item in data:
+                dir_name = item.split('_')[0]
+                name = os.path.join(dir_name, item)
+                filepath = os.path.join(img_root, name)
+                split.append((filepath, item))
     else:
-        img_root = os.path.join(img_root, split_dir)
-        for name in os.listdir(img_root):
-            idx = name.split(".")[0]
-            pathXid.append((os.path.join(img_root, name),
-                        idx))
-    return pathXid
+        print ('Unknown split')
+    return split
+
+
+def clean_up_download(img_ids):
+
+    downloaded_img = []
+    corrupted_index = []
+    for i, img in enumerate(img_ids):
+
+        img_path, img_id = img
+        if os.path.isfile(img_path):
+            try:
+                curr_img = Image.open(img_path)
+                curr_img.verify()
+            except (IOError, SyntaxError) as e:
+                if os.path.exists(img_path):
+                    os.remove(img_path)
+                corrupted_index.append(i)
+                img_ids.remove(img)
+        else:
+            corrupted_index.append(i)
+            img_ids.remove(img)
+
+    print(corrupted_index)
+
+
+
 
 def generate_tsv(prototxt, weights, image_ids, outfile):
     # First check if file exists, and if it is complete
@@ -88,6 +143,7 @@ def generate_tsv(prototxt, weights, image_ids, outfile):
                         writer.writerow(get_detections_from_im(net, im_file, image_id))
                     except Exception as e:
                         print(e)
+
 
 
 def get_detections_from_im(net, im_file, image_id, conf_thresh=0.2):
@@ -174,11 +230,10 @@ if __name__ == '__main__':
     # Setup the configuration, normally do not need to touch these:
     args = parse_args()
 
-
-    args.cfg_file = BUTD_ROOT + "experiments/cfgs/faster_rcnn_end2end_resnet.yml" # s = 500
+    args.cfg_file = BUTD_ROOT + "experiments/cfgs/faster_rcnn_end2end_resnet.yml"  # s = 500
     args.prototxt = BUTD_ROOT + "models/vg/ResNet-101/faster_rcnn_end2end_final/test.prototxt"
     args.outfile = "%s_obj36.tsv" % args.split
-    
+
     print('Called with args:')
     print(args)
 
@@ -190,7 +245,8 @@ if __name__ == '__main__':
     assert cfg.TEST.HAS_RPN
 
     # Load image ids, need modification for new datasets.
-    image_ids = load_image_ids(args.imgroot, SPLIT2DIR[args.split])  
-    
-    # Generate TSV files, noramlly do not need to modify
+    image_ids = load_image_ids(args.imgroot, SPLIT2DIR[args.split])
+    # clean_up_download(image_ids)
+    # # Generate TSV files, normally do not need to modify
+
     generate_tsv(args.prototxt, args.caffemodel, image_ids, args.outfile)

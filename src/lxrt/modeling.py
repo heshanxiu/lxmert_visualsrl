@@ -483,7 +483,11 @@ class LXRTXLayer(nn.Module):
                                                           visn_att_output, visn_attention_mask)
         lang_att_output, visn_att_output = self.self_att(lang_att_output, lang_attention_mask,
                                                          visn_att_output, visn_attention_mask)
+        # print(visn_att_output.shape)
+        # print(visn_att_output)
+        ## edit here ! a structural prediction
         lang_output, visn_output = self.output_fc(lang_att_output, visn_att_output)
+
 
         return lang_output, visn_output
 
@@ -516,10 +520,11 @@ class VisualFeatEncoder(nn.Module):
         output = self.dropout(output)
         return output
 
-
+# the largest encoder
 class LXRTEncoder(nn.Module):
     def __init__(self, config):
         super().__init__()
+
 
         # Obj-level image embedding layer
         self.visn_fc = VisualFeatEncoder(config)
@@ -533,12 +538,17 @@ class LXRTEncoder(nn.Module):
 
         # Layers
         # Using self.layer instead of self.l_layer to support loading BERT weights.
+        #Shanxiu: language
         self.layer = nn.ModuleList(
             [BertLayer(config) for _ in range(self.num_l_layers)]
         )
+
+        #Shanxiu: mix
         self.x_layers = nn.ModuleList(
             [LXRTXLayer(config) for _ in range(self.num_x_layers)]
         )
+
+        #Shanxiu: vision
         self.r_layers = nn.ModuleList(
             [BertLayer(config) for _ in range(self.num_r_layers)]
         )
@@ -548,22 +558,35 @@ class LXRTEncoder(nn.Module):
         # Run visual embedding layer
         # Note: Word embedding layer was executed outside this module.
         #       Keep this design to allow loading BERT weights.
+
+
         visn_feats = self.visn_fc(visn_feats)
 
+        visn_feats_each = []
+
+
         # Run language layers
-        for layer_module in self.layer:
-            lang_feats = layer_module(lang_feats, lang_attention_mask)
+        if lang_feats is not None:
+            for layer_module in self.layer:
+                lang_feats = layer_module(lang_feats, lang_attention_mask)
 
         # Run relational layers
         for layer_module in self.r_layers:
             visn_feats = layer_module(visn_feats, visn_attention_mask)
+            # print("576 add each layer",visn_feats.shape)
+            visn_feats_each.append(visn_feats)
 
+        if lang_feats is not None:
         # Run cross-modality layers
-        for layer_module in self.x_layers:
-            lang_feats, visn_feats = layer_module(lang_feats, lang_attention_mask,
+            for layer_module in self.x_layers:
+                lang_feats, visn_feats = layer_module(lang_feats, lang_attention_mask,
                                                   visn_feats, visn_attention_mask)
 
-        return lang_feats, visn_feats
+        # print(len(visn_feats_each))
+
+
+
+        return visn_feats_each if lang_feats is None else lang_feats, visn_feats
 
 
 class BertPooler(nn.Module):
@@ -672,7 +695,7 @@ class BertPreTrainingHeads(nn.Module):
 
 class BertPreTrainedModel(nn.Module):
     """ An abstract class to handle weights initialization and
-        a simple interface for dowloading and loading pretrained models.
+        a simple interface for downloading and loading pretrained models.
     """
     def __init__(self, config, *inputs, **kwargs):
         super(BertPreTrainedModel, self).__init__()
@@ -844,25 +867,31 @@ class LXRTModel(BertPreTrainedModel):
 
     def forward(self, input_ids, token_type_ids=None, attention_mask=None,
                 visual_feats=None, visual_attention_mask=None):
-        if attention_mask is None:
-            attention_mask = torch.ones_like(input_ids)
-        if token_type_ids is None:
-            token_type_ids = torch.zeros_like(input_ids)
+
+        if input_ids is not None:
+            if attention_mask is None:
+                attention_mask = torch.ones_like(input_ids)
+            if token_type_ids is None:
+                token_type_ids = torch.zeros_like(input_ids)
 
         # We create a 3D attention mask from a 2D tensor mask.
         # Sizes are [batch_size, 1, 1, to_seq_length]
         # So we can broadcast to [batch_size, num_heads, from_seq_length, to_seq_length]
         # this attention mask is more simple than the triangular masking of causal attention
         # used in OpenAI GPT, we just need to prepare the broadcast dimension here.
-        extended_attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
+        if input_ids is not None:
+            extended_attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
+        else:
+            extended_attention_mask = None
 
         # Since attention_mask is 1.0 for positions we want to attend and 0.0 for
         # masked positions, this operation will create a tensor which is 0.0 for
         # positions we want to attend and -10000.0 for masked positions.
         # Since we are adding it to the raw scores before the softmax, this is
         # effectively the same as removing these entirely.
-        extended_attention_mask = extended_attention_mask.to(dtype=next(self.parameters()).dtype) # fp16 compatibility
-        extended_attention_mask = (1.0 - extended_attention_mask) * -10000.0
+        if input_ids is not None:
+            extended_attention_mask = extended_attention_mask.to(dtype=next(self.parameters()).dtype) # fp16 compatibility
+            extended_attention_mask = (1.0 - extended_attention_mask) * -10000.0
 
         # Process the visual attention mask
         if visual_attention_mask is not None:
@@ -873,17 +902,32 @@ class LXRTModel(BertPreTrainedModel):
             extended_visual_attention_mask = None
 
         # Positional Word Embeddings
-        embedding_output = self.embeddings(input_ids, token_type_ids)
+        if input_ids is not None:
+            embedding_output = self.embeddings(input_ids, token_type_ids)
+        else:
+            embedding_output = None
 
         # Run LXRT backbone
-        lang_feats, visn_feats = self.encoder(
+        lang_feats = None
+        if embedding_output is None:
+            _, visn_feats = self.encoder(
             embedding_output,
             extended_attention_mask,
             visn_feats=visual_feats,
             visn_attention_mask=extended_visual_attention_mask)
-        pooled_output = self.pooler(lang_feats)
+        else:
+            lang_feats, visn_feats = self.encoder(
+                embedding_output,
+                extended_attention_mask,
+                visn_feats=visual_feats,
+                visn_attention_mask=extended_visual_attention_mask)
 
-        return (lang_feats, visn_feats), pooled_output
+
+        if lang_feats is not None:
+            pooled_output = self.pooler(lang_feats)
+
+
+        return (lang_feats, visn_feats), pooled_output if lang_feats is not None else ((None, visn_feats), None)
 
 
 class LXRTPretraining(BertPreTrainedModel):
@@ -1006,6 +1050,7 @@ class LXRTFeatureExtraction(BertPreTrainedModel):
 
     def forward(self, input_ids, token_type_ids=None, attention_mask=None, visual_feats=None,
                 visual_attention_mask=None):
+
         feat_seq, pooled_output = self.bert(input_ids, token_type_ids, attention_mask,
                                             visual_feats=visual_feats,
                                             visual_attention_mask=visual_attention_mask)
