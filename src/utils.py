@@ -5,6 +5,9 @@ import sys
 import csv
 import base64
 import time
+import json
+import h5py
+from tqdm import tqdm
 
 import numpy as np
 
@@ -53,3 +56,46 @@ def load_obj_tsv(fname, topk=None):
     print("Loaded %d images in file %s in %d seconds." % (len(data), fname, elapsed_time))
     return data
 
+
+def load_obj_h5py(image_to_index, h5py_file, topk=None):
+    """Load object features from tsv file.
+
+    :param image_to_index: The path to the index json file.
+    :param image_to_index: The path to the index json file.
+    :param topk: Only load features for top K images (lines) in the json file.
+        Will load all the features if topk is either -1 or None.
+    :return: A list of image object features where each feature is a dict.
+        See FILENAMES above for the keys in the feature dict.
+    """
+    data = []
+    start_time = time.time()
+    print("Start to load Faster-RCNN detected objects from %s" % h5py_file)
+    with open(image_to_index) as index_file:
+        images = json.load(index_file)
+        for i, (image, index) in enumerate(tqdm(images.items())):
+            item = {}
+            with h5py.File(h5py_file, "r") as f:
+                item["img_id"] = str(image)
+                for key in ['img_h', 'img_w', 'num_boxes']:
+                    item[key] = int(f[key][index])
+
+                boxes = int(f['num_boxes'][index])
+                decode_config = [
+                    ('objects_id', (boxes,), np.int64),
+                    ('objects_conf', (boxes,), np.float32),
+                    ('attrs_id', (boxes,), np.int64),
+                    ('attrs_conf', (boxes,), np.float32),
+                    ('boxes', (boxes, 4), np.float32),
+                    ('features', (boxes, -1), np.float32),
+                ]
+                for key, shape, dtype in decode_config:
+                    item[key] = f[key][index]
+                    item[key] = item[key].reshape(shape)
+                    item[key].setflags(write=False)
+
+            data.append(item)
+            if topk is not None and len(data) == topk:
+                break
+    elapsed_time = time.time() - start_time
+    print("Loaded %d images in file %s in %d seconds." % (len(data), h5py_file, elapsed_time))
+    return data

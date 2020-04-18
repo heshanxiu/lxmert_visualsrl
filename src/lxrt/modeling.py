@@ -582,12 +582,10 @@ class LXRTEncoder(nn.Module):
                 lang_feats, visn_feats = layer_module(lang_feats, lang_attention_mask,
                                                   visn_feats, visn_attention_mask)
 
-        # print(len(visn_feats_each))
 
 
-
-        return visn_feats_each if lang_feats is None else lang_feats, visn_feats
-
+        # return _, visn_feats_each if lang_feats is None else lang_feats, visn_feats
+        return None, visn_feats_each
 
 class BertPooler(nn.Module):
     def __init__(self, config):

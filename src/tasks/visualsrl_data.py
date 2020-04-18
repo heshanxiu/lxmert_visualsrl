@@ -10,7 +10,8 @@ import torch
 from torch.utils.data import Dataset
 
 from param import args
-from utils import load_obj_tsv
+from src.utils import load_obj_h5py
+from src.utils import load_obj_tsv
 
 # Load part of the dataset for fast checking.
 # Notice that here is the number of images instead of the number of data,
@@ -20,20 +21,16 @@ FAST_IMG_NUM = 512
 
 # The path to data and image features.
 # VQA_DATA_ROOT = 'data/visualsrl/'
-VISUALSRL_IMGFEAT_ROOT = 'data/visualsrl_imgfeat/'
+VISUALSRL_IMGFEAT_ROOT = './data/visualsrl_imgfeat/'
 SPLIT2NAME = {
     'train': 'train',
     'dev': 'dev',
-    'minidev': 'tiny_dev',
-    'minitrain': 'tiny_train',
     'test': 'test',
 }
 SPLIT2NUM = {
-    'train': 22056,
-    'dev': 15656,
-    'minidev': 100,
-    'minitrain': 200,
-    'test': 25196,
+    'train': 75702,
+    'dev': 25200,
+    'test': 25200,
 }
 
 """
@@ -54,8 +51,13 @@ class VisualSRLTorchDataset(Dataset):
             # Minival is 5K images in MS COCO, which is used in evaluating VQA/LXMERT-pre-training.
             # It is saved as the top 5K features in val2014_***.tsv
         load_topk = SPLIT2NUM[splits]
-        self.img_data.extend(load_obj_tsv(
-            os.path.join(VISUALSRL_IMGFEAT_ROOT, '%s_obj36.tsv' % (SPLIT2NAME[self.splits])),topk=load_topk))
+        # self.img_data.extend(load_obj_tsv(
+        #     os.path.join(VISUALSRL_IMGFEAT_ROOT, '%s_obj36.tsv' % (SPLIT2NAME[self.splits])), topk=load_topk))
+
+        self.img_data.extend(load_obj_h5py(
+            os.path.join(VISUALSRL_IMGFEAT_ROOT, '%s_image_to_index.json' % (SPLIT2NAME[self.splits])),
+            os.path.join(VISUALSRL_IMGFEAT_ROOT, '%s_obj36' % (SPLIT2NAME[self.splits])),
+            topk=load_topk))
 
         # Convert img list to dict
         self.imgid2img = {}

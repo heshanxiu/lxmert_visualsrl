@@ -3,6 +3,7 @@
 
 import os
 import collections
+
 import json
 import numpy as np
 import h5py
@@ -18,11 +19,9 @@ from tasks.visualsrl_data import VisualSRLTorchDataset
 DataTuple = collections.namedtuple("DataTuple", 'dataset loader evaluator')
 
 SPLIT2NUM = {
-    'train': 22056,
-    'dev': 15656,
-    'minidev': 100,
-    'minitrain': 200,
-    'test': 25196,
+    'train': 75702,
+    'dev': 25200,
+    'test': 25200,
 }
 
 def get_data_tuple(splits: str, bs: int, shuffle=False, drop_last=False) -> DataTuple:
@@ -60,9 +59,7 @@ class VisualSRL:
         self.output = args.output
         os.makedirs(self.output, exist_ok=True)
 
-
-
-    def extract_feature(self,train_tuple: DataTuple):
+    def extract_feature(self, train_tuple: DataTuple):
         # get every feature from visualsrl
         #input into lxmert
         #call lxmert to let it run, add functionality in visual-encoder to record each layer's representation
@@ -70,31 +67,38 @@ class VisualSRL:
         self.model.eval()
         _, loader, _ = train_tuple
 
-        h5_file_path = os.path.join(args.output,"lxmert_feature")
-        h5_file = h5py.File(h5_file_path, 'w')
-        num_examples = SPLIT2NUM[args.train]
+        h5_file_path = os.path.join(args.output, "lxmert_feature")
+        if not os.path.exists(h5_file_path):
+            with h5py.File(h5_file_path, 'a') as h5_file:
+                num_examples = SPLIT2NUM[args.train]
+                h5_features = h5_file.create_dataset('features', (num_examples, 5, 36, 768), dtype=np.float32)
 
-        h5_features = h5_file.create_dataset('features', (num_examples, 5, 36, 768), dtype=np.float32)
-
-        image_index_dic = {}
-        for i, datum_tuple in tqdm(enumerate(loader)):
-            img_name, feats, boxes = datum_tuple[:3]   # Avoid seeing ground truth
-            with torch.no_grad():
-                feats, boxes = feats.cuda(), boxes.cuda()
-                ((lang_feats, visn_feats), _) = self.model(feats, boxes)
-                # h5_image_id[i,0] = img_name
-                # print(len(img_name))
-                image_index_dic[str(img_name[0])] = i
-                if lang_feats is None:
-                    for j, each_layer_feat in enumerate(visn_feats):
-                        h5_features[i, j] = each_layer_feat.cpu().numpy()
+        with h5py.File(h5_file_path, 'a') as h5_file:
+            image_index_dic = {}
+            for i, datum_tuple in enumerate(tqdm(loader)):
+                img_name, feats, boxes = datum_tuple  # Avoid seeing ground truth
+                try:
+                    with torch.no_grad():
+                        feats, boxes = feats.cuda(), boxes.cuda()
+                        ((lang_feats, visn_feats), _) = self.model(feats, boxes)
+                        image_index_dic[str(img_name[0])] = i
+                        if lang_feats is None:
+                            for j, each_layer_feat in enumerate(visn_feats):
+                                h5_file['features'][i, j] = each_layer_feat.cpu().numpy()
+                except Exception as e:
+                    json_object = json.dumps(image_index_dic, indent=4)
+                    json_file_path = os.path.join(args.output, "image_id_to_index.json")
+                    with open(json_file_path, "w") as outfile:
+                        print("json file path {}".format(json_file_path))
+                        outfile.write(json_object)
+                    print(e)
 
         json_object = json.dumps(image_index_dic, indent=4)
         json_file_path = os.path.join(args.output, "image_id_to_index.json")
         with open(json_file_path, "w") as outfile:
+            print("json file path {}".format(json_file_path))
             outfile.write(json_object)
 
-        h5_file.close()
 
     def save(self, name):
         torch.save(self.model.state_dict(),
